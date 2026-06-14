@@ -42,7 +42,6 @@ limitations under the License.
 #include "util/tensor_helper.h"
 
 #define CONDITION_IMAGE_SIZE 147456
-#define VAE_IMAGE_SIZE 1048576
 
 namespace xllm {
 class QwenImageEditPlusPipelineImpl : public torch::nn::Module {
@@ -328,8 +327,7 @@ class QwenImageEditPlusPipelineImpl : public torch::nn::Module {
     std::vector<torch::Tensor> image_list;
     image_list.reserve(input.images_list.size());
 
-    for (const auto& images : input.images_list) {
-      auto img = images.to(options_.device(), dtype_);
+    for (const auto& img : input.images_list) {
       if (img.dim() != 4) {
         LOG(ERROR)
             << "image inputs are expected to be a 4 dim tensor, but got: "
@@ -375,8 +373,9 @@ class QwenImageEditPlusPipelineImpl : public torch::nn::Module {
             static_cast<double>(image_list[i].size(2)) / image_list[i].size(1);
         auto [condition_width, condition_height] =
             xllm::dit::calculate_dimensions(CONDITION_IMAGE_SIZE, aspect_ratio);
-        auto [vae_width, vae_height] =
-            xllm::dit::calculate_dimensions(VAE_IMAGE_SIZE, aspect_ratio);
+        auto [vae_width, vae_height] = xllm::dit::calculate_dimensions(
+            ::xllm::DiTConfig::get_instance().dit_vae_image_size(),
+            aspect_ratio);
         condition_image_sizes.push_back({condition_width, condition_height});
         vae_image_sizes.push_back({vae_width, vae_height});
         auto img = image_list[i].unsqueeze(0);

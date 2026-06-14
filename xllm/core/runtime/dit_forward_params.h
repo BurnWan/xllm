@@ -212,7 +212,7 @@ struct DiTForwardInput {
     }
 
     for (auto& img : input.images_list) {
-      img = img.to(device, dtype);
+      img = img.to(device);
     }
 
     if (control_image.defined()) {
@@ -244,7 +244,7 @@ struct DiTForwardInput {
 
   torch::Tensor images;
 
-  std::vector<torch::Tensor> images_list;
+  std::vector<torch::Tensor> images_list;  // UInt8
 
   torch::Tensor mask_images;
 

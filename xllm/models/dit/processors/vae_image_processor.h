@@ -178,7 +178,11 @@ class VAEImageProcessorImpl : public torch::nn::Module {
                        const std::vector<int64_t>& size,
                        size_t resample,
                        bool antialias) {
-    if (image.dim() != 4) {
+    torch::Tensor resized_img = image.clone();
+    if (resized_img.dtype() != torch::kFloat32) {
+      resized_img = resized_img.to(torch::kFloat32);
+    }
+    if (resized_img.dim() != 4) {
       LOG(FATAL) << "Input image must be a 4D tensor (B x C x H x W).";
     }
     auto options = torch::nn::functional::InterpolateFuncOptions()
@@ -198,7 +202,7 @@ class VAEImageProcessorImpl : public torch::nn::Module {
       default:
         LOG(FATAL) << "Invalid resample value. Must be one of 1, 2, or 3.";
     }
-    return torch::nn::functional::interpolate(image, options);
+    return torch::nn::functional::interpolate(resized_img, options);
   }
 
   torch::Tensor lanczos_resize(torch::Tensor image,
