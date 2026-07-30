@@ -23,7 +23,7 @@ DEFINE_int32(max_requests_per_batch, 1, "Max number of request per batch.");
 DEFINE_string(dit_cache_policy,
               "TaylorSeer",
               "The policy of dit cache(e.g. None, FBCache, TaylorSeer, "
-              "FBCacheTaylorSeer, ResidualCache).");
+              "FBCacheTaylorSeer, ResidualCache, RegionE).");
 
 DEFINE_int64(dit_cache_warmup_steps, 0, "The number of warmup steps.");
 
@@ -52,6 +52,49 @@ DEFINE_int64(dit_cache_start_blocks,
 DEFINE_int64(dit_cache_end_blocks,
              5,
              "The number of blocks to skip at the end.");
+
+DEFINE_int64(dit_regione_warmup_steps,
+             2,
+             "RegionE: number of full-image warmup steps.");
+
+DEFINE_int64(dit_regione_skip_interval_steps,
+             3,
+             "RegionE: fixed interval for real DiT refresh in RAGS.");
+
+DEFINE_int64(dit_regione_tail_steps,
+             1,
+             "RegionE: final full-image stabilization steps.");
+
+DEFINE_string(dit_regione_refresh_steps,
+              "16",
+              "RegionE: comma-separated full-image refresh steps in RAGS.");
+
+DEFINE_double(dit_regione_region_threshold,
+              0.80,
+              "RegionE: cosine threshold for adaptive region partition.");
+
+DEFINE_bool(dit_regione_erosion_dilation,
+            true,
+            "RegionE: enable erosion/dilation for region mask cleanup.");
+
+DEFINE_string(dit_regione_kv_cache_mode,
+              "local",
+              "RegionE: image K/V cache mode: local, full, or off.");
+
+DEFINE_bool(
+    dit_regione_kv_async_prefetch,
+    true,
+    "RegionE: asynchronously prefetch next block image K/V from CPU cache.");
+
+DEFINE_bool(dit_regione_kv_cpu_pinned,
+            true,
+            "RegionE: store CPU offloaded image K/V in pinned host memory for "
+            "async H2D prefetch.");
+
+DEFINE_bool(dit_regione_profile,
+            false,
+            "RegionE: print per-step timing breakdown for partial/full DiT and "
+            "K/V CPU offload.");
 
 DEFINE_bool(dit_sp_communication_overlap,
             true,
@@ -126,6 +169,16 @@ void DiTConfig::from_flags() {
   XLLM_CONFIG_ASSIGN_FROM_FLAG(dit_cache_end_steps);
   XLLM_CONFIG_ASSIGN_FROM_FLAG(dit_cache_start_blocks);
   XLLM_CONFIG_ASSIGN_FROM_FLAG(dit_cache_end_blocks);
+  XLLM_CONFIG_ASSIGN_FROM_FLAG(dit_regione_warmup_steps);
+  XLLM_CONFIG_ASSIGN_FROM_FLAG(dit_regione_skip_interval_steps);
+  XLLM_CONFIG_ASSIGN_FROM_FLAG(dit_regione_tail_steps);
+  XLLM_CONFIG_ASSIGN_FROM_FLAG(dit_regione_refresh_steps);
+  XLLM_CONFIG_ASSIGN_FROM_FLAG(dit_regione_region_threshold);
+  XLLM_CONFIG_ASSIGN_FROM_FLAG(dit_regione_erosion_dilation);
+  XLLM_CONFIG_ASSIGN_FROM_FLAG(dit_regione_kv_cache_mode);
+  XLLM_CONFIG_ASSIGN_FROM_FLAG(dit_regione_kv_async_prefetch);
+  XLLM_CONFIG_ASSIGN_FROM_FLAG(dit_regione_kv_cpu_pinned);
+  XLLM_CONFIG_ASSIGN_FROM_FLAG(dit_regione_profile);
   XLLM_CONFIG_ASSIGN_FROM_FLAG(dit_sp_communication_overlap);
   XLLM_CONFIG_ASSIGN_FROM_FLAG(dit_debug_print);
   XLLM_CONFIG_ASSIGN_FROM_FLAG(dit_laser_attention_enabled);
@@ -151,6 +204,16 @@ void DiTConfig::from_json(const JsonReader& json) {
   XLLM_CONFIG_ASSIGN_FROM_JSON(dit_cache_end_steps);
   XLLM_CONFIG_ASSIGN_FROM_JSON(dit_cache_start_blocks);
   XLLM_CONFIG_ASSIGN_FROM_JSON(dit_cache_end_blocks);
+  XLLM_CONFIG_ASSIGN_FROM_JSON(dit_regione_warmup_steps);
+  XLLM_CONFIG_ASSIGN_FROM_JSON(dit_regione_skip_interval_steps);
+  XLLM_CONFIG_ASSIGN_FROM_JSON(dit_regione_tail_steps);
+  XLLM_CONFIG_ASSIGN_FROM_JSON(dit_regione_refresh_steps);
+  XLLM_CONFIG_ASSIGN_FROM_JSON(dit_regione_region_threshold);
+  XLLM_CONFIG_ASSIGN_FROM_JSON(dit_regione_erosion_dilation);
+  XLLM_CONFIG_ASSIGN_FROM_JSON(dit_regione_kv_cache_mode);
+  XLLM_CONFIG_ASSIGN_FROM_JSON(dit_regione_kv_async_prefetch);
+  XLLM_CONFIG_ASSIGN_FROM_JSON(dit_regione_kv_cpu_pinned);
+  XLLM_CONFIG_ASSIGN_FROM_JSON(dit_regione_profile);
   XLLM_CONFIG_ASSIGN_FROM_JSON(dit_sp_communication_overlap);
   XLLM_CONFIG_ASSIGN_FROM_JSON(dit_debug_print);
   XLLM_CONFIG_ASSIGN_FROM_JSON(dit_laser_attention_enabled);
@@ -187,6 +250,26 @@ void DiTConfig::append_config_json(nlohmann::ordered_json& config_json) const {
       config_json, default_config, dit_cache_start_blocks);
   APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(
       config_json, default_config, dit_cache_end_blocks);
+  APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(
+      config_json, default_config, dit_regione_warmup_steps);
+  APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(
+      config_json, default_config, dit_regione_skip_interval_steps);
+  APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(
+      config_json, default_config, dit_regione_tail_steps);
+  APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(
+      config_json, default_config, dit_regione_refresh_steps);
+  APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(
+      config_json, default_config, dit_regione_region_threshold);
+  APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(
+      config_json, default_config, dit_regione_erosion_dilation);
+  APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(
+      config_json, default_config, dit_regione_kv_cache_mode);
+  APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(
+      config_json, default_config, dit_regione_kv_async_prefetch);
+  APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(
+      config_json, default_config, dit_regione_kv_cpu_pinned);
+  APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(
+      config_json, default_config, dit_regione_profile);
   APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(
       config_json, default_config, dit_sp_communication_overlap);
   APPEND_CONFIG_JSON_VALUE_IF_NOT_DEFAULT(

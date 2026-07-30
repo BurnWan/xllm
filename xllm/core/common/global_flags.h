@@ -353,6 +353,17 @@ DECLARE_int64(dit_cache_start_blocks);
 
 DECLARE_int64(dit_cache_end_blocks);
 
+DECLARE_int64(dit_regione_warmup_steps);
+DECLARE_int64(dit_regione_skip_interval_steps);
+DECLARE_int64(dit_regione_tail_steps);
+DECLARE_string(dit_regione_refresh_steps);
+DECLARE_double(dit_regione_region_threshold);
+DECLARE_bool(dit_regione_erosion_dilation);
+DECLARE_string(dit_regione_kv_cache_mode);
+DECLARE_bool(dit_regione_kv_async_prefetch);
+DECLARE_bool(dit_regione_kv_cpu_pinned);
+DECLARE_bool(dit_regione_profile);
+
 DECLARE_bool(dit_sp_communication_overlap);
 
 DECLARE_int64(dit_generation_image_area_max);

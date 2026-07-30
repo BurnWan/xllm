@@ -51,6 +51,16 @@ class DiTConfig final {
          "dit_cache_end_steps",
          "dit_cache_start_blocks",
          "dit_cache_end_blocks",
+         "dit_regione_warmup_steps",
+         "dit_regione_skip_interval_steps",
+         "dit_regione_tail_steps",
+         "dit_regione_refresh_steps",
+         "dit_regione_region_threshold",
+         "dit_regione_erosion_dilation",
+         "dit_regione_kv_cache_mode",
+         "dit_regione_kv_async_prefetch",
+         "dit_regione_kv_cpu_pinned",
+         "dit_regione_profile",
          "dit_sp_communication_overlap",
          "dit_debug_print",
          "dit_laser_attention_enabled",
@@ -85,6 +95,26 @@ class DiTConfig final {
   PROPERTY(int64_t, dit_cache_start_blocks) = 5;
 
   PROPERTY(int64_t, dit_cache_end_blocks) = 5;
+
+  PROPERTY(int64_t, dit_regione_warmup_steps) = 2;
+
+  PROPERTY(int64_t, dit_regione_skip_interval_steps) = 3;
+
+  PROPERTY(int64_t, dit_regione_tail_steps) = 1;
+
+  PROPERTY(std::string, dit_regione_refresh_steps) = "16";
+
+  PROPERTY(double, dit_regione_region_threshold) = 0.80;
+
+  PROPERTY(bool, dit_regione_erosion_dilation) = true;
+
+  PROPERTY(std::string, dit_regione_kv_cache_mode) = "local";
+
+  PROPERTY(bool, dit_regione_kv_async_prefetch) = true;
+
+  PROPERTY(bool, dit_regione_kv_cpu_pinned) = true;
+
+  PROPERTY(bool, dit_regione_profile) = false;
 
   PROPERTY(bool, dit_sp_communication_overlap) = true;
 
