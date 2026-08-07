@@ -92,7 +92,18 @@ class DiTCache {
   bool regione_has_regions() const { return regione_edited_ids_.defined(); }
   bool regione_is_partial_mode() const { return regione_partial_mode_; }
   bool regione_is_partial_sp_mode() const;
-  bool regione_should_compute_velocity(int64_t step) const;
+  bool regione_fit_gamma_enabled() const {
+    return regione_enabled_ && config_.regione.fit_gamma;
+  }
+  // Decide whether to run DiT this step (true) or reuse velocity cache (false).
+  // Matches RegionE inplace.py AVDCache with fitted gamma when enabled.
+  // timestep / prev_timestep are FlowMatch scheduler values (same scale as
+  // inplace.py `t` / `timesteps[i-1]`, typically in [0,1000]).
+  bool regione_should_compute_velocity(int64_t step,
+                                       double timestep,
+                                       double prev_timestep);
+  // Last AVD ratio used when reusing velocity: noise_pred = cache * scale.
+  double regione_velocity_scale() const { return regione_avd_ratio_; }
   bool regione_should_run_full_step(int64_t step) const;
   bool regione_should_direct_unedited(int64_t step) const;
   int64_t regione_next_direct_step(int64_t step) const;
@@ -102,6 +113,10 @@ class DiTCache {
                                  int64_t grid_w,
                                  int64_t sp_rank = 0,
                                  int64_t sp_size = 1);
+  void regione_record_gamma_fit_step(int64_t step,
+                                     double timestep,
+                                     const torch::Tensor& velocity);
+  void regione_flush_gamma_fit_sample();
   void regione_select_regions(const torch::Tensor& sample,
                               const torch::Tensor& model_output,
                               const torch::Tensor& sigmas,
@@ -216,6 +231,15 @@ class DiTCache {
   torch::Tensor regione_local_edited_cache_ids_;
   torch::Tensor regione_local_image_global_ids_;
   torch::Tensor regione_velocity_cache_;
+  // AVDCache state (paper Eq.7-9 / inplace.py accumulate+error).
+  double regione_avd_accumulate_ = 1.0;
+  double regione_avd_ratio_ = 1.0;
+  struct RegionEGammaFitStep {
+    int64_t step = 0;
+    double timestep = 0.0;
+    double v_norm = 0.0;
+  };
+  std::vector<RegionEGammaFitStep> regione_gamma_fit_steps_;
   std::vector<torch::Tensor> regione_k_cache_cpu_;
   std::vector<torch::Tensor> regione_v_cache_cpu_;
   std::vector<torch::Tensor> regione_cond_k_cache_cpu_;

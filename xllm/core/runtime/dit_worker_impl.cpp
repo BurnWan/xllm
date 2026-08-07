@@ -105,6 +105,12 @@ DiTCacheConfig parse_dit_cache_from_flags() {
         ::xllm::DiTConfig::get_instance().dit_regione_refresh_steps());
     cache_config.regione.region_threshold =
         ::xllm::DiTConfig::get_instance().dit_regione_region_threshold();
+    cache_config.regione.cache_threshold = static_cast<float>(
+        ::xllm::DiTConfig::get_instance().dit_regione_cache_threshold());
+    cache_config.regione.use_avd_gamma =
+        ::xllm::DiTConfig::get_instance().dit_regione_use_avd_gamma();
+    cache_config.regione.fit_gamma =
+        ::xllm::DiTConfig::get_instance().dit_regione_fit_gamma();
     cache_config.regione.erosion_dilation =
         ::xllm::DiTConfig::get_instance().dit_regione_erosion_dilation();
     cache_config.regione.kv_cache_mode =

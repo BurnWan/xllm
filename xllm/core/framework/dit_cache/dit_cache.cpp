@@ -19,6 +19,11 @@ limitations under the License.
 
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
+#include <sstream>
 
 namespace xllm {
 namespace {
@@ -54,6 +59,8 @@ bool DiTCache::init(const DiTCacheConfig& cfg) {
   config_ = cfg;
   regione_enabled_ = cfg.selected_policy == PolicyType::RegionE;
   regione_velocity_cache_ = torch::Tensor();
+  regione_avd_accumulate_ = 1.0;
+  regione_avd_ratio_ = 1.0;
   regione_current_block_ = -1;
   regione_current_use_cfg_ = false;
   regione_current_step_ = 0;
@@ -102,18 +109,98 @@ bool DiTCache::regione_is_tail_step(int64_t step) const {
 
 bool DiTCache::regione_should_run_full_step(int64_t step) const {
   if (!regione_enabled_) return true;
+  // Offline γ fitting needs consecutive full-image DiT velocities.
+  if (config_.regione.fit_gamma) return true;
   if (!regione_has_regions()) return true;
   if (step < config_.regione.warmup_steps) return true;
   if (regione_is_tail_step(step)) return true;
   return regione_is_refresh_step(step);
 }
 
-bool DiTCache::regione_should_compute_velocity(int64_t step) const {
-  if (!regione_enabled_) return true;
-  if (regione_should_run_full_step(step)) return true;
-  const auto interval =
-      std::max<int64_t>(1, config_.regione.skip_interval_steps);
-  return ((step - config_.regione.warmup_steps) % interval) == 0;
+bool DiTCache::regione_should_compute_velocity(int64_t step,
+                                               double timestep,
+                                               double prev_timestep) {
+  if (!regione_enabled_) {
+    regione_avd_ratio_ = 1.0;
+    return true;
+  }
+  // Fit mode: always run DiT so (t, ||v||) traces are complete.
+  if (config_.regione.fit_gamma) {
+    regione_avd_accumulate_ = 1.0;
+    regione_avd_ratio_ = 1.0;
+    return true;
+  }
+  // STS / SMS / forced refresh: always run DiT and reset AVD accumulator.
+  // Original inplace.py also disables AVD at step == warmup (partial DiT still
+  // runs); keep that separate from regione_should_run_full_step so ARP→partial
+  // transition at warmup is unchanged.
+  if (regione_should_run_full_step(step) ||
+      step <= config_.regione.warmup_steps) {
+    regione_avd_accumulate_ = 1.0;
+    regione_avd_ratio_ = 1.0;
+    return true;
+  }
+
+  // Reference γ curve fitted offline for 40-step Oxygen-Imagen /
+  // Qwen-Image-Edit FlowMatch (median over gamma_fit_40/*.json, 40 samples).
+  // Indexed as gamma[i-1] for the transition into step i. For other step
+  // counts, resample by schedule progress onto this curve.
+  static constexpr double kRegionEGammaRef[] = {
+      1.031148, 1.012653, 1.012252, 1.016921, 1.012969, 1.020706, 1.012239,
+      1.017130, 1.014522, 1.017337, 1.014137, 1.017961, 1.018937, 1.017905,
+      1.020041, 1.020414, 1.020396, 1.002896, 1.023375, 1.021143, 1.022940,
+      1.024213, 1.024528, 1.027289, 1.026527, 1.027286, 1.028421, 1.030374,
+      1.029394, 1.030469, 1.033296, 1.033680, 1.035454, 1.032651, 1.031143,
+      1.025096, 1.010560, 0.962215, 0.781340};
+  static constexpr int64_t kGammaRefLen = static_cast<int64_t>(
+      sizeof(kRegionEGammaRef) / sizeof(kRegionEGammaRef[0]));
+
+  auto sample_gamma = [&](int64_t cur_step) -> double {
+    // Reference indexed by (step-1) on a 40-step schedule (39 transitions).
+    const int64_t n_steps =
+        regione_infer_steps_ > 1 ? regione_infer_steps_ : (kGammaRefLen + 1);
+    const int64_t n_trans = std::max<int64_t>(1, n_steps - 1);
+    const int64_t idx = std::max<int64_t>(0, cur_step - 1);
+    // Map transition index onto reference curve [0, kGammaRefLen-1].
+    const double pos = static_cast<double>(idx) *
+                       static_cast<double>(kGammaRefLen - 1) /
+                       static_cast<double>(std::max<int64_t>(1, n_trans - 1));
+    const int64_t lo = std::min(static_cast<int64_t>(pos), kGammaRefLen - 1);
+    const int64_t hi = std::min(lo + 1, kGammaRefLen - 1);
+    const double frac = pos - static_cast<double>(lo);
+    return kRegionEGammaRef[lo] * (1.0 - frac) + kRegionEGammaRef[hi] * frac;
+  };
+
+  if (!config_.regione.use_avd_gamma || step < 1) {
+    const auto interval =
+        std::max<int64_t>(1, config_.regione.skip_interval_steps);
+    const bool compute =
+        ((step - config_.regione.warmup_steps) % interval) == 0;
+    regione_avd_ratio_ = 1.0;
+    if (compute) regione_avd_accumulate_ = 1.0;
+    return compute;
+  }
+
+  // AVDCache (paper Eq.7-9 / inplace.py), step-count agnostic via resampled γ:
+  //   ratio = gamma(step) * (1 + (t - t_prev) / 1000)
+  //   accumulate *= ratio; error = 1 - accumulate
+  //   reuse velocity while error <= cache_threshold and ratio < 1
+  const double gamma = sample_gamma(step);
+  const double ratio = gamma * (1.0 + (timestep - prev_timestep) / 1000.0);
+  regione_avd_ratio_ = ratio;
+
+  if (ratio >= 1.0) {
+    regione_avd_accumulate_ = 1.0;
+    return true;  // recompute DiT
+  }
+
+  regione_avd_accumulate_ *= ratio;
+  const double error = 1.0 - regione_avd_accumulate_;
+  if (error > static_cast<double>(config_.regione.cache_threshold)) {
+    regione_avd_accumulate_ = 1.0;
+    return true;  // recompute DiT
+  }
+  return false;  // reuse velocity cache * ratio
 }
 
 bool DiTCache::regione_should_direct_unedited(int64_t step) const {
@@ -179,6 +266,9 @@ void DiTCache::regione_prepare_inference(const torch::Tensor& latents,
   regione_edited_ids_ = torch::Tensor();
   regione_unedited_ids_ = torch::Tensor();
   regione_velocity_cache_ = torch::Tensor();
+  regione_avd_accumulate_ = 1.0;
+  regione_avd_ratio_ = 1.0;
+  regione_gamma_fit_steps_.clear();
   regione_partial_mode_ = false;
   regione_local_edited_global_ids_ = torch::Tensor();
   regione_local_edited_cache_ids_ = torch::Tensor();
@@ -381,6 +471,66 @@ void DiTCache::regione_update_velocity_cache(const torch::Tensor& value) {
 
 torch::Tensor DiTCache::regione_velocity_cache() const {
   return regione_velocity_cache_;
+}
+
+void DiTCache::regione_record_gamma_fit_step(int64_t step,
+                                             double timestep,
+                                             const torch::Tensor& velocity) {
+  if (!regione_fit_gamma_enabled() || !velocity.defined()) return;
+  RegionEGammaFitStep rec;
+  rec.step = step;
+  rec.timestep = timestep;
+  // Paper Eq.7 uses ||v||; Frobenius norm over the full velocity tensor.
+  rec.v_norm = velocity.detach().to(torch::kFloat32).norm().item<double>();
+  regione_gamma_fit_steps_.push_back(rec);
+  LOG(INFO) << "[RegionEGammaFit] step=" << step << " t=" << timestep
+            << " v_norm=" << rec.v_norm;
+}
+
+void DiTCache::regione_flush_gamma_fit_sample() {
+  if (!regione_fit_gamma_enabled() || regione_gamma_fit_steps_.empty()) return;
+
+  const char* dir_env = std::getenv("XLLM_REGIONE_GAMMA_FIT_DIR");
+  std::string dump_dir = (dir_env != nullptr && dir_env[0] != '\0')
+                             ? std::string(dir_env)
+                             : std::string("/tmp/regione_gamma_fit");
+  std::error_code ec;
+  std::filesystem::create_directories(dump_dir, ec);
+  if (ec) {
+    LOG(ERROR) << "[RegionEGammaFit] failed to create dir " << dump_dir << ": "
+               << ec.message();
+    regione_gamma_fit_steps_.clear();
+    return;
+  }
+
+  const auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                          std::chrono::system_clock::now().time_since_epoch())
+                          .count();
+  std::ostringstream path_ss;
+  path_ss << dump_dir << "/sample_" << now_ms << ".json";
+  const std::string path = path_ss.str();
+
+  std::ostringstream json;
+  json << std::setprecision(10);
+  json << "{\"num_steps\":" << regione_gamma_fit_steps_.size()
+       << ",\"steps\":[";
+  for (size_t i = 0; i < regione_gamma_fit_steps_.size(); ++i) {
+    const auto& s = regione_gamma_fit_steps_[i];
+    if (i > 0) json << ",";
+    json << "{\"i\":" << s.step << ",\"t\":" << s.timestep
+         << ",\"v_norm\":" << s.v_norm << "}";
+  }
+  json << "]}";
+
+  std::ofstream ofs(path);
+  if (!ofs.is_open()) {
+    LOG(ERROR) << "[RegionEGammaFit] failed to write " << path;
+  } else {
+    ofs << json.str() << "\n";
+    LOG(INFO) << "[RegionEGammaFit] wrote " << path
+              << " steps=" << regione_gamma_fit_steps_.size();
+  }
+  regione_gamma_fit_steps_.clear();
 }
 
 void DiTCache::regione_prefetch_img_kv(int64_t block_id,

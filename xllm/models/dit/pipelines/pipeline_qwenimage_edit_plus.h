@@ -1115,9 +1115,18 @@ class QwenImageEditPlusPipelineImpl : public torch::nn::Module {
       auto regione_cached_noise =
           regione_enabled ? DiTCache::get_instance().regione_velocity_cache()
                           : torch::Tensor();
+      double prev_t_value = 0.0;
+      double t_value = 0.0;
+      if (regione_enabled) {
+        t_value = t.item<double>();
+        if (i > 0) {
+          prev_t_value = timesteps[i - 1].item<double>();
+        }
+      }
       const bool regione_use_velocity_cache =
           regione_enabled &&
-          !DiTCache::get_instance().regione_should_compute_velocity(i) &&
+          !DiTCache::get_instance().regione_should_compute_velocity(
+              i, t_value, prev_t_value) &&
           regione_cached_noise.defined();
       if (regione_profile_enabled) {
         DiTCache::get_instance().regione_profile_reset_step(
@@ -1134,11 +1143,14 @@ class QwenImageEditPlusPipelineImpl : public torch::nn::Module {
       }
       auto regione_transformer_start = regione_profile_now();
       if (regione_use_velocity_cache) {
-        noise_pred = regione_partial_step && regione_cached_noise.size(1) !=
-                                                 step_latents.size(1)
-                         ? DiTCache::get_instance().regione_gather_edited(
-                               regione_cached_noise)
-                         : regione_cached_noise;
+        // inplace.py: noise_pred = cache * ratio
+        auto cached = regione_partial_step && regione_cached_noise.size(1) !=
+                                                  step_latents.size(1)
+                          ? DiTCache::get_instance().regione_gather_edited(
+                                regione_cached_noise)
+                          : regione_cached_noise;
+        const double scale = DiTCache::get_instance().regione_velocity_scale();
+        noise_pred = cached * scale;
       } else if (::xllm::ParallelConfig::get_instance().cfg_size() == 2 &&
                  do_true_cfg) {
         auto rank = parallel_args_.dit_cfg_group_->rank();
@@ -1230,6 +1242,10 @@ class QwenImageEditPlusPipelineImpl : public torch::nn::Module {
 
       if (regione_enabled && !regione_use_velocity_cache) {
         DiTCache::get_instance().regione_update_velocity_cache(noise_pred);
+        if (DiTCache::get_instance().regione_fit_gamma_enabled()) {
+          DiTCache::get_instance().regione_record_gamma_fit_step(
+              i, t_value, noise_pred);
+        }
       }
 
       auto regione_scheduler_start = regione_profile_now();
@@ -1293,6 +1309,9 @@ class QwenImageEditPlusPipelineImpl : public torch::nn::Module {
             regione_scheduler_ms,
             regione_profile_ms_since(regione_step_profile_start));
       }
+    }
+    if (DiTCache::get_instance().regione_fit_gamma_enabled()) {
+      DiTCache::get_instance().regione_flush_gamma_fit_sample();
     }
     if (regione_profile_enabled) {
       LOG(INFO) << "[RegionEProfile] dit_loop_total_ms="

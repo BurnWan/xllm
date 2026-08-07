@@ -56,6 +56,9 @@ class DiTConfig final {
          "dit_regione_tail_steps",
          "dit_regione_refresh_steps",
          "dit_regione_region_threshold",
+         "dit_regione_cache_threshold",
+         "dit_regione_use_avd_gamma",
+         "dit_regione_fit_gamma",
          "dit_regione_erosion_dilation",
          "dit_regione_kv_cache_mode",
          "dit_regione_kv_async_prefetch",
@@ -105,6 +108,12 @@ class DiTConfig final {
   PROPERTY(std::string, dit_regione_refresh_steps) = "16";
 
   PROPERTY(double, dit_regione_region_threshold) = 0.80;
+
+  PROPERTY(double, dit_regione_cache_threshold) = 0.03;
+
+  PROPERTY(bool, dit_regione_use_avd_gamma) = true;
+
+  PROPERTY(bool, dit_regione_fit_gamma) = false;
 
   PROPERTY(bool, dit_regione_erosion_dilation) = true;
 
